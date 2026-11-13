@@ -1,0 +1,75 @@
+name: Android APK P3
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Build and publish Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download matching Godot 4.6.3 and export templates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.6.3.stable" build /tmp/godot
+          curl -fL --retry 3 -o /tmp/godot/editor.zip "https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot/editor.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.6.3-stable_linux.x86_64
+          sudo mv /tmp/godot/Godot_v4.6.3-stable_linux.x86_64 /usr/local/bin/godot
+          curl -fL --retry 3 -o /tmp/godot/templates.tpz "https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_export_templates.tpz"
+          unzip -q /tmp/godot/templates.tpz -d /tmp/godot
+          cp -r /tmp/godot/templates/. "$HOME/.local/share/godot/export_templates/4.6.3.stable/"
+          godot --version
+      - name: Configure Android debug signing
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+      - name: Import project and validate GDScript
+        run: |
+          set -euxo pipefail
+          godot --headless --editor --path . --import --quit
+          godot --headless --path . --quit-after 5
+          godot --headless --path . --script res://game/test_p3.gd
+      - name: Export unsigned-store-independent debug APK
+        run: |
+          set -euxo pipefail
+          godot --headless --path . --export-debug Android build/Cat-Run-Away-P3.apk
+          test -s build/Cat-Run-Away-P3.apk
+          ls -lh build/Cat-Run-Away-P3.apk
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cat-Run-Away-P3-Android-APK
+          path: build/Cat-Run-Away-P3.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish P3 prerelease for easy downloads
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: p3-preview
+          name: Cat, Run Away! P3 Android preview
+          prerelease: true
+          overwrite_files: true
+          body: |
+            Three rounds: maze, collect key, parkour, rescue kitten, return to mum.
+            Larger touch controls, dog barks and event-triggered kitten meows.
+            Debug-signed testing APK, not a Google Play release.
+          files: build/Cat-Run-Away-P3.apk
