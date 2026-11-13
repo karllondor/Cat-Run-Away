@@ -347,7 +347,7 @@ func _begin_parkour() -> void:
     var first := Rect2(0, 590, 720, 200)
     platforms.append(first)
     var right := first.end.x
-    var count := [12, 16, 20][stage_index]
+    var count: int = [12, 16, 20][stage_index]
     for i in range(count):
         var gap := 100.0 + float((i + stage_index) % 3) * 15.0
         var width := 300.0 + float(i % 3) * 45.0
