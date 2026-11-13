@@ -1,0 +1,157 @@
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+import numpy as np
+from scipy import ndimage
+import json, shutil, hashlib, math, wave, struct
+
+ROOT = Path(__file__).parent
+OUT = ROOT / 'cat_runaway_assets_v01'
+ART = OUT / 'assets'
+for sub in ['characters','props','tiles','ui','audio']:
+    (ART/sub).mkdir(parents=True,exist_ok=True)
+for sub in ['source','previews','godot','docs']:
+    (OUT/sub).mkdir(exist_ok=True)
+SOURCES = {
+ 'hero':'exec-56fc476d-22af-48d3-b3bf-6907bf8443a0.png',
+ 'dog':'exec-f70a4d88-602a-4af4-8019-e851007ba3a0.png',
+ 'objects':'exec-7ef89a14-bfb9-4351-a707-add3f64fb15f.png',
+ 'environment':'exec-e2cbbcec-8c4c-4545-b8d5-9ae47c3f588e.png'}
+manifest={'name':'Cat, Run Away!','version':'0.1.0','status':'prototype assets; motion requires child playtest','source_model':'OpenAI built-in ImageGen; backend model ID not exposed','build_model':'GPT-6 (Codex); exact runtime variant not exposed','engine_validation':'Godot 4.6.3','assets':[],'animations':{}}
+def record(path,**kw):
+    manifest['assets'].append({'path':str(path.relative_to(OUT)),**kw})
+def save(im,path,**kw):
+    im.save(path)
+    record(path,width=im.width,height=im.height,**kw)
+def extract(im,r,c):
+    w,h=im.size
+    cell=im.crop((round(c*w/4),round(r*h/4),round((c+1)*w/4),round((r+1)*h/4)))
+    a=np.array(cell)
+    mask=a[:,:,3]>100
+    labels,n=ndimage.label(mask)
+    sizes=np.bincount(labels.ravel())
+    keep=sizes>=max(12,int(mask.sum()*.002)); keep[0]=False
+    good=keep[labels]
+    # Remove detached source speckles only; preserve original RGB and antialiasing.
+    near=ndimage.binary_dilation(good,iterations=2)
+    a[:,:,3]=np.where(near,a[:,:,3],0)
+    cell=Image.fromarray(a)
+    box=Image.fromarray((good*255).astype('uint8')).getbbox()
+    assert box, (r,c)
+    return cell.crop(box)
+def fit(im,size=128,extent=112,scale=None,bottom=True):
+    scale=scale or min(extent/im.width,extent/im.height)
+    ni=im.resize((max(1,round(im.width*scale)),max(1,round(im.height*scale))),Image.Resampling.NEAREST)
+    frame=Image.new('RGBA',(size,size))
+    frame.alpha_composite(ni,((size-ni.width)//2,size-6-ni.height if bottom else (size-ni.height)//2))
+    return frame
+raw={}
+for name,src in SOURCES.items():
+    p=OUT/'source'/f'{name}_source.png'; shutil.copy2(ROOT/'generated_images'/src,p)
+    im=Image.open(p).convert('RGBA')
+    raw[name]=[extract(im,r,c) for r in range(4) for c in range(4)]
+shutil.copy2(ROOT/'asset_prompts.json',OUT/'source'/'prompts.json')
+all_frames={}
+for actor in ['hero','dog']:
+    cells=raw[actor]; frames=[]
+    for r in range(4):
+        group=cells[:8] if r<2 else cells[8:]
+        scale=min(112/max(i.width for i in group),112/max(i.height for i in group))
+        frames += [fit(cells[r*4+c],scale=scale) for c in range(4)]
+    all_frames[actor]=frames
+    sheet=Image.new('RGBA',(512,512))
+    for i,f in enumerate(frames):
+        sheet.alpha_composite(f,((i%4)*128,(i//4)*128))
+    save(sheet,ART/'characters'/f'{actor}_128.png',kind='spritesheet',grid=[4,4],pivot=[64,122])
+    for i,f in enumerate(frames):
+        save(f,ART/'characters'/f'{actor}_{i:02}.png',kind='frame',pivot=[64,122])
+    anims={'walk_down':{'indices':[0,1,2,3],'fps':7,'loop':True},'walk_up':{'indices':[4,5,6,7],'fps':7,'loop':True},'walk_right':{'indices':[8,9,10,11],'fps':8,'loop':True},'walk_left':{'indices':[8,9,10,11],'fps':8,'loop':True,'flip_h':True},'idle_down':{'indices':[0],'fps':1,'loop':True},'idle_up':{'indices':[4],'fps':1,'loop':True},'idle_right':{'indices':[9 if actor=='hero' else 12],'fps':1,'loop':True}}
+    if actor=='hero':
+        anims.update({'jump_takeoff':{'indices':[12,13],'fps':10,'loop':False},'jump_air':{'indices':[14],'fps':1,'loop':True},'jump_land':{'indices':[15],'fps':8,'loop':False}})
+    else:
+        for name,idx in [('idle',12),('alert',13),('bark',14),('sit',15)]: anims[name]={'indices':[idx],'fps':1,'loop':True}
+    manifest['animations'][actor]=anims
+    # Left-facing resources use independent pre-flipped frames, avoiding node-state dependency.
+    text='[gd_resource type="SpriteFrames" load_steps=22 format=3]\n\n[ext_resource type="Texture2D" path="res://assets/characters/'+actor+'_128.png" id="1"]\n'
+    for i in range(16):
+        text+=f'\n[sub_resource type="AtlasTexture" id="Frame_{i}"]\natlas = ExtResource("1")\nregion = Rect2({i%4*128}, {i//4*128}, 128, 128)\n'
+    for j,i in enumerate([8,9,10,11]):
+        flip=ImageOps.mirror(frames[i]);save(flip,ART/'characters'/f'{actor}_left_{j}.png',kind='frame',pivot=[64,122])
+    # External flipped textures are declared before sub-resources.
+    extra=''.join(f'[ext_resource type="Texture2D" path="res://assets/characters/{actor}_left_{j}.png" id="L{j}"]\n' for j in range(4))
+    text=text.replace('\n[sub_resource type="AtlasTexture" id="Frame_0"]','\n'+extra+'\n[sub_resource type="AtlasTexture" id="Frame_0"]',1)
+    text+='\n[resource]\nanimations = [\n'
+    entries=[]
+    for name,info in anims.items():
+        refs=[f'ExtResource("L{j}")' for j in range(4)] if name=='walk_left' else [f'SubResource("Frame_{i}")' for i in info['indices']]
+        fs=', '.join('{"duration": 1.0, "texture": '+ref+'}' for ref in refs)
+        entries.append('{"frames": ['+fs+'], "loop": '+str(info['loop']).lower()+', "name": &"'+name+'", "speed": '+str(float(info['fps']))+'}')
+    text+=',\n'.join(entries)+'\n]\n'
+    (OUT/'godot'/f'{actor}_frames.tres').write_text(text)
+
+objnames=['mother_down','mother_right','kitten_down','kitten_right','key','door_closed','door_open','cat_tunnel','heart_full','heart_empty','quest','hint_paw','button_left','button_right','button_jump','button_pause']
+for i,name in enumerate(objnames):
+    ui=i>=8; size=64 if ui else 128
+    f=fit(raw['objects'][i],size=size,extent=size-8,bottom=not ui)
+    save(f,ART/('ui' if ui else 'props')/(name+'.png'),kind='ui' if ui else 'prop')
+envnames=['grass','stone_path','dirt','hedge_block','hedge_horizontal','hedge_vertical','hedge_corner','flowers','grass_platform','earth_fill','rock_platform','rock_fill','tree','fountain','boulder','paw_sign']
+for i,name in enumerate(envnames):
+    ground=i in [0,1,2,9,11]
+    if ground:
+        im=raw['environment'][i]
+        # Crop a fully opaque interior sample so rectangular tiles have no alpha gaps.
+        w,h=im.size; box=(int(w*.13),int(h*.13),int(w*.87),int(h*.87))
+        f=im.crop(box).convert('RGB').resize((64,64),Image.Resampling.NEAREST).convert('RGBA')
+    else:
+        f=fit(raw['environment'][i],size=128 if i>=12 else 64,extent=116 if i>=12 else 64,bottom=False)
+    save(f,ART/'tiles'/(name+'.png'),kind='ground_tile' if ground else 'terrain_prop',seamless=False)
+
+# Short original synthesized sound effects. No external recordings or libraries.
+RATE=22050
+def sound(name,notes,duration=.25,noise=0):
+    n=int(RATE*duration); rng=np.random.default_rng(47)
+    t=np.arange(n)/RATE; signal=np.zeros(n)
+    chunks=np.array_split(np.arange(n),len(notes))
+    for ids,freq in zip(chunks,notes):
+        u=np.arange(len(ids))/RATE
+        env=np.sin(np.linspace(0,np.pi,len(ids)))**1.5
+        signal[ids]=(.7*np.sin(2*np.pi*freq*u)+.18*np.sin(4*np.pi*freq*u)+noise*rng.uniform(-1,1,len(ids)))*env
+    signal*=.28/max(1,np.max(np.abs(signal)))
+    p=ART/'audio'/(name+'.wav')
+    with wave.open(str(p),'wb') as w:
+        w.setnchannels(1);w.setsampwidth(2);w.setframerate(RATE);w.writeframes((signal*32767).astype('<i2').tobytes())
+    record(p,kind='audio',sample_rate=RATE,channels=1,duration=duration,origin='original procedural synthesis')
+sound('key_collect',[660,880,1320],.32)
+sound('jump',[280,420,560],.18)
+sound('hurt',[440,280,180],.25,.1)
+sound('kitten_rescued',[523,659,784,1047],.6)
+sound('door_open',[180,260,390],.4,.08)
+sound('ui_tap',[880],.07)
+
+FONT='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+font=ImageFont.truetype(FONT,19);small=ImageFont.truetype(FONT,14);big=ImageFont.truetype(FONT,30)
+board=Image.new('RGB',(1280,1030),'#102d2c');d=ImageDraw.Draw(board)
+d.text((32,18),'CAT, RUN AWAY!  /  ASSET KIT 0.1',font=big,fill='#ffdf93')
+d.text((32,62),'TOP-DOWN MAZE + SIDE-VIEW PARKOUR   |   PROTOTYPE',font=font,fill='#9fd3bb')
+for section,ys,paths in [('HERO + DOG / DIRECTIONAL WALK & JUMP',105,[ART/'characters'/f'{a}_{i:02}.png' for a in ['hero','dog'] for i in [0,4,8,9,10,11,14,15]]),('OBJECTS + UI',390,[ART/('ui' if i>=8 else 'props')/(n+'.png') for i,n in enumerate(objnames)]),('GARDEN + PLATFORMS',680,[ART/'tiles'/(n+'.png') for n in envnames])]:
+    d.text((32,ys),section,font=font,fill='#ffdf93')
+    for j,p in enumerate(paths):
+        x=32+(j%8)*155;y=ys+40+(j//8)*127
+        d.rounded_rectangle((x,y,x+140,y+117),10,fill='#d8e8d4')
+        im=Image.open(p).convert('RGBA');im.thumbnail((100,90),Image.Resampling.NEAREST)
+        board.paste(im,(x+(140-im.width)//2,y+3),im)
+        d.text((x+4,y+97),p.stem[:19],font=small,fill='#19362b')
+board.save(OUT/'previews'/'asset_board.png')
+
+# Genuine frame-sequence GIFs, not geometric deformation of a single pose.
+gifs=[]
+for k in range(4):
+    frame=Image.new('RGB',(896,360),'#d8e8d4');dd=ImageDraw.Draw(frame)
+    dd.text((20,12),'CAT, RUN AWAY! / ACTUAL 4-FRAME ANIMATION PREVIEW',font=font,fill='#19362b')
+    for j,(actor,row,label) in enumerate([('hero',0,'CAT: DOWN'),('hero',1,'CAT: UP'),('hero',2,'CAT: SIDE'),('dog',2,'DOG: SIDE')]):
+        im=all_frames[actor][row*4+k].resize((192,192),Image.Resampling.NEAREST)
+        frame.paste(im,(j*220+8,65),im);dd.text((j*220+20,280),label,font=font,fill='#19362b')
+    gifs.append(frame)
+gifs[0].save(OUT/'previews'/'walk_cycles.gif',save_all=True,append_images=gifs[1:],duration=140,loop=0,disposal=2)
+
+(OUT/'manifest.json').write_text(json.dumps(manifest,indent=2))
+print(json.dumps({'root':str(OUT),'assets':len(manifest['assets']),'animations':{k:len(v) for k,v in manifest['animations'].items()}},indent=2))

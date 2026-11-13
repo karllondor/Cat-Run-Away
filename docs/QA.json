@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "engine": "Godot 4.6.3",
+  "asset_count": 115,
+  "new_platformer_graphics": 34,
+  "import": "PASS",
+  "all_declared_resources_dimensions_and_SpriteFrames": "PASS",
+  "terrain_tiles_with_collision": 16,
+  "platform_scenes_with_collision": 11,
+  "collision_resource_validation": "PASS",
+  "platformer_scene_headless_30_frames": "PASS",
+  "maze_review_scene_headless": "PASS",
+  "authorized_tile_boundary_pixel_comparisons": "PASS",
+  "composition_png_visual_review": "PASS",
+  "gpu_render_review": "NOT RUN: no graphical display",
+  "audio_listening": "NOT RUN",
+  "child_playtest": "NOT RUN",
+  "gameplay": "NOT IMPLEMENTED: asset review only",
+  "models": {
+    "images": "OpenAI built-in ImageGen, exact backend ID not exposed",
+    "preparation": "Codex, GPT-6 family, exact runtime variant not exposed"
+  },
+  "limitations": [
+    "Four-frame generated motion needs in-game review.",
+    "Only documented tile boundaries match; no autotile masks.",
+    "Stairs and decorative props have no collision scene.",
+    "Finite single-layer background, no looping or separated parallax.",
+    "No movement, dog AI or playable rescue flow."
+  ],
+  "github_write": {
+    "status": "PASS",
+    "authenticated_account": "karllondor",
+    "installation_account": "karllondor",
+    "verification": "Successful Git blob creation through integration"
+  }
+}
