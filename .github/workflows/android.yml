@@ -41,12 +41,18 @@ jobs:
           echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_ENV"
           echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
           echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
-      - name: Import project and validate GDScript
+      - name: Import Godot assets
         run: |
           set -euxo pipefail
-          godot --headless --editor --path . --import --quit
-          godot --headless --path . --quit-after 5
-          godot --headless --path . --script res://game/test_p3.gd
+          timeout 150s godot --headless --editor --path . --import --quit
+      - name: Smoke-test game launch
+        run: |
+          set -euxo pipefail
+          timeout 25s godot --headless --path . --quit-after 5
+      - name: Test 3 complete rescues
+        run: |
+          set -euxo pipefail
+          timeout 65s godot --headless --path . --script res://game/test_p3.gd
       - name: Export unsigned-store-independent debug APK
         run: |
           set -euxo pipefail
