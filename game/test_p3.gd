@@ -17,6 +17,8 @@ func _test() -> void:
         assert(game.dogs.size() == stage + 1)
         assert(game._is_open(game.key_cell))
         assert(game._is_open(game.door_cell))
+        assert(game.door_cell != game.start_cell)
+        assert(game.door_cell != game.key_cell)
         game.player_pos = game._cell_center(game.key_cell)
         game._update_maze(0.016)
         assert(game.has_key)

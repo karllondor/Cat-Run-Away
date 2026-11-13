@@ -99,19 +99,19 @@ func _animal_synth(kind: String, variation: int) -> AudioStreamWAV:
     for i in range(length):
         var t := float(i) / float(length)
         var hz := 0.0
-        var signal := 0.0
+        var waveform := 0.0
         var envelope := 0.0
         if kind == "meow":
             hz = 540.0 + variation * 85.0 + 250.0 * sin(PI * t) - 125.0 * t + 18.0 * sin(TAU * 9.0 * t)
             envelope = pow(maxf(0.0, sin(PI * t)), 0.8)
-            signal = sin(phase) * 0.72 + sin(phase * 2.0) * 0.19 + sin(phase * 3.0) * 0.09
+            waveform = sin(phase) * 0.72 + sin(phase * 2.0) * 0.19 + sin(phase * 3.0) * 0.09
         else:
             hz = 190.0 + variation * 30.0 - 65.0 * t
             var pulse := 1.0 if t < 0.44 else (0.75 if t > 0.53 else 0.0)
             envelope = minf(1.0, t * 50.0) * pow(1.0 - t, 1.8) * pulse
-            signal = sin(phase) * 0.55 + sin(phase * 1.95) * 0.26 + rng.randf_range(-0.26, 0.26)
+            waveform = sin(phase) * 0.55 + sin(phase * 1.95) * 0.26 + rng.randf_range(-0.26, 0.26)
         phase += TAU * hz / float(rate)
-        var sample := int(clampf(signal * envelope, -1.0, 1.0) * 17000.0)
+        var sample := int(clampf(waveform * envelope, -1.0, 1.0) * 17000.0)
         bytes[i * 2] = sample & 255
         bytes[i * 2 + 1] = (sample >> 8) & 255
     var stream := AudioStreamWAV.new()
@@ -168,9 +168,21 @@ func _build_maze() -> void:
         maze[target.y][target.x] = 0
         trail.append(target)
     key_cell = _farthest(start_cell)
-    door_cell = _farthest(key_cell)
-    if door_cell == key_cell:
-        door_cell = start_cell
+    # Place door part-way along the actual maze path (not beside the mother).
+    # Player passes the door before collecting the key, returns to unlock it,
+    # then retraces a meaningful distance home after rescuing a kitten.
+    var path_to_key: Array[Vector2i] = []
+    var path_cursor: Vector2i = key_cell
+    for path_step in range(maze_columns * maze_rows):
+        if path_cursor == start_cell:
+            break
+        path_to_key.append(path_cursor)
+        path_cursor = _next_maze_step(path_cursor, start_cell)
+    path_to_key.reverse()
+    if path_to_key.size() >= 4:
+        door_cell = path_to_key[clampi(roundi(path_to_key.size() * 0.55), 1, path_to_key.size() - 2)]
+    else:
+        door_cell = key_cell
     dogs.clear()
     var dog_count := stage_index + 1
     var route: Array[Vector2i] = _open_cells()
